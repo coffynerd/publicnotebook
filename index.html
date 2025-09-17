@@ -169,8 +169,8 @@
         
         // --- CORE LOGIC ---
         async function fetchAndRenderNote() {
-            const pathParts = window.location.pathname.split('/').filter(p => p);
-            noteUUID = pathParts[pathParts.length - 1];
+            const urlParams = new URLSearchParams(window.location.search);
+            noteUUID = urlParams.get('uuid');
             
             const titleEl = document.getElementById('note-title');
             const contentEl = document.getElementById('note-content');
@@ -277,3 +277,4 @@
     </script>
 </body>
 </html>
+
