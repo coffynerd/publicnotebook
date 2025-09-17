@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Udostępniona Notatka</title>
+    <link rel="icon" href="favicon.png" type="image/png">
+    <style>
+        :root {
+            --background-light: #f0f2f5;
+            --background-dark: #121212;
+            --text-light: #1c1c1c;
+            --text-dark: #e0e0e0;
+            --surface-light: #fff;
+            --surface-dark: #1e1e1e;
+            --border-light: #ddd;
+            --border-dark: #333;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background-color: var(--background-light);
+            color: var(--text-light);
+            transition: background-color 0.3s, color 0.3s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        body.dark-mode {
+            background-color: var(--background-dark);
+            color: var(--text-dark);
+        }
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background-color: var(--surface-light);
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .dark-mode .container {
+            background-color: var(--surface-dark);
+            border: 1px solid var(--border-dark);
+        }
+        header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .dark-mode header {
+            border-bottom-color: var(--border-dark);
+        }
+        #note-title {
+            margin: 0;
+            font-size: 2em;
+        }
+        main {
+            padding: 20px;
+            line-height: 1.6;
+        }
+        #note-content div {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        #note-content input[type="checkbox"] {
+            margin-right: 12px;
+            flex-shrink: 0;
+            width: 1.2em;
+            height: 1.2em;
+            cursor: pointer;
+        }
+        #note-content button {
+             cursor: pointer; padding: 8px 12px; border: none; border-radius: 4px; color: white; background-color: #004896; transition: background-color 0.3s;
+        }
+        #theme-toggle-btn {
+            font-size: 1.5em;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0 10px;
+            color: var(--text-light);
+        }
+        .dark-mode #theme-toggle-btn {
+            color: var(--text-dark);
+        }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 2000;
+        }
+        .modal-content {
+            background: var(--surface-light); color: var(--text-light); padding: 20px; border-radius: 8px; text-align: center; max-width: 90%; width: 400px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .dark-mode .modal-content { background: var(--surface-dark); color: var(--text-dark); }
+    </style>
+</head>
+<body>
+    <div id="modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h4 id="modal-title"></h4>
+            <p id="modal-text"></p>
+            <button id="modal-close-btn">Zamknij</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1 id="note-title">Ładowanie notatki...</h1>
+            <button id="theme-toggle-btn" title="Zmień motyw"></button>
+        </header>
+        <main>
+            <div id="note-content"><p>Pobieranie treści...</p></div>
+        </main>
+    </div>
+
+    <script type="module">
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+        // --- SUPABASE CONFIG ---
+        const supabaseUrl = 'https://ugznhwthaztruazsjbhu.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnem5od3RoYXp0cnVhenNqYmh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg0NjU4NjAsImV4cCI6MjA2NDA0MTg2MH0.MlBkk-oKSRW7CaUiFf3Edo0KXamVlLaZfLuxGcWL4yU';
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        // --- GLOBAL STATE ---
+        let currentNote = null;
+        let noteUUID = '';
+
+        // --- UI UTILITIES ---
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalText = document.getElementById('modal-text');
+        document.getElementById('modal-close-btn').onclick = () => modal.style.display = 'none';
+
+        function showModal(title, text) {
+            modalTitle.textContent = title;
+            modalText.textContent = text;
+            modal.style.display = 'flex';
+        }
+
+        // --- NOTE HELPERS ---
+        function convertTextToHtml(text) {
+            if (!text) return '';
+            const buttonRegex = /\[(.*?)\]\{(.*?)\}/g;
+            const lines = text.split('\n');
+            const htmlLines = lines.map(line => {
+                let processedLine = line;
+                const trimmed = line.trim();
+
+                if (trimmed.startsWith('# ')) {
+                    return `<div><input type="checkbox">${trimmed.substring(2)}</div>`;
+                } else if (trimmed.startsWith('& ')) {
+                    return `<div><input type="checkbox" checked>${trimmed.substring(2)}</div>`;
+                }
+
+                processedLine = processedLine.replace(buttonRegex, (match, buttonText, link) => {
+                    let href = link.trim();
+                    if (!href.startsWith('http://') && !href.startsWith('https://')) {
+                        href = 'https://' + href;
+                    }
+                    return `<a href="${href}" target="_blank"><button>${buttonText}</button></a>`;
+                });
+
+                return `<div>${processedLine}</div>`;
+            });
+            return htmlLines.join('');
+        }
+        
+        // --- CORE LOGIC ---
+        async function fetchAndRenderNote() {
+            const pathParts = window.location.pathname.split('/').filter(p => p);
+            noteUUID = pathParts[pathParts.length - 1];
+            
+            const titleEl = document.getElementById('note-title');
+            const contentEl = document.getElementById('note-content');
+
+            if (!noteUUID) {
+                titleEl.textContent = 'Błąd';
+                contentEl.innerHTML = '<p>Nie znaleziono identyfikatora notatki w adresie URL.</p>';
+                return;
+            }
+
+            const { data, error } = await supabase
+                .from('notes')
+                .select('*')
+                .eq('uuid', noteUUID)
+                .eq('is_public', true)
+                .single();
+
+            if (error || !data) {
+                console.error('Error fetching note:', error);
+                titleEl.textContent = 'Brak dostępu';
+                contentEl.innerHTML = '<p>Notatka nie została znaleziona lub nie jest publiczna.</p>';
+                return;
+            }
+            
+            currentNote = data; // Store the fetched note state
+
+            titleEl.textContent = currentNote.title;
+            titleEl.style.color = currentNote.title_color || 'inherit';
+            document.title = currentNote.title; // Update page title
+
+            contentEl.innerHTML = convertTextToHtml(currentNote.content);
+        }
+
+        async function handleCheckboxChange(e) {
+            if (!currentNote || (e.target.tagName !== 'INPUT' || e.target.type !== 'checkbox')) {
+                return;
+            }
+
+            const checkboxes = Array.from(document.querySelectorAll('#note-content input[type="checkbox"]'));
+            const clickedIndex = checkboxes.indexOf(e.target);
+            
+            if (clickedIndex === -1) return;
+
+            const lines = currentNote.content.split('\n');
+            let checkboxCounter = -1;
+
+            const newLines = lines.map(line => {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('# ') || trimmed.startsWith('& ')) {
+                    checkboxCounter++;
+                    if (checkboxCounter === clickedIndex) {
+                        const newPrefix = e.target.checked ? '& ' : '# ';
+                        return newPrefix + trimmed.substring(2);
+                    }
+                }
+                return line;
+            });
+            
+            const newContent = newLines.join('\n');
+
+            // Optimistic update
+            const oldContent = currentNote.content;
+            currentNote.content = newContent;
+
+            const { error } = await supabase
+                .from('notes')
+                .update({ content: newContent, updated_at: new Date() })
+                .eq('uuid', noteUUID);
+
+            if (error) {
+                // Revert on failure
+                currentNote.content = oldContent;
+                e.target.checked = !e.target.checked;
+                showModal('Błąd', 'Nie udało się zapisać zmiany.');
+                console.error('Error updating note:', error);
+            }
+        }
+
+        // --- THEME ---
+        function updateThemeIcon() {
+            const isDarkMode = document.body.classList.contains('dark-mode');
+            document.getElementById('theme-toggle-btn').innerHTML = isDarkMode ? '&#9728;&#65039;' : '&#127769;';
+        }
+        function toggleTheme() {
+            document.body.classList.toggle('dark-mode');
+            localStorage.setItem('publicNoteTheme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
+            updateThemeIcon();
+        }
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedTheme = localStorage.getItem('publicNoteTheme');
+            if (savedTheme === 'dark') {
+                document.body.classList.add('dark-mode');
+            }
+            updateThemeIcon();
+            
+            document.getElementById('theme-toggle-btn').addEventListener('click', toggleTheme);
+            document.getElementById('note-content').addEventListener('change', handleCheckboxChange);
+            
+            fetchAndRenderNote();
+        });
+
+    </script>
+</body>
+</html>
