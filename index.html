@@ -185,7 +185,6 @@
                 .from('notes')
                 .select('*')
                 .eq('uuid', noteUUID)
-                .eq('is_public', true)
                 .single();
 
             if (error || !data) {
