@@ -74,7 +74,7 @@
             cursor: pointer;
         }
         #note-content button {
-             cursor: pointer; padding: 8px 12px; border: none; border-radius: 4px; color: white; background-color: #004896; transition: background-color 0.3s;
+            cursor: pointer; padding: 8px 12px; border: none; border-radius: 4px; color: white; background-color: #004896; transition: background-color 0.3s;
         }
         #theme-toggle-btn {
             font-size: 1.5em;
@@ -116,16 +116,37 @@
     </div>
 
     <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-        // --- SUPABASE CONFIG ---
+        // --- CONFIGURATION ---
+        const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const firebaseConfig = firebaseConfigFromEnv || {
+            apiKey: "AIzaSyDT2h4LtrlLP0d2X4jWyaQKabzUbpK_elA",
+            authDomain: "psb-app-58090.firebaseapp.com",
+            projectId: "psb-app-58090",
+            storageBucket: "psb-app-58090.appspot.com",
+            messagingSenderId: "100516614463",
+            appId: "1:100516614463:web:36fe37ee48cee575b8838a"
+        };
         const supabaseUrl = 'https://ugznhwthaztruazsjbhu.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnem5od3RoYXp0cnVhenNqYmh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg0NjU4NjAsImV4cCI6MjA2NDA0MTg2MH0.MlBkk-oKSRW7CaUiFf3Edo0KXamVlLaZfLuxGcWL4yU';
         const supabase = createClient(supabaseUrl, supabaseKey);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        // --- FIREBASE INIT ---
+        let db;
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+        } catch(e) {
+            console.error("Firebase init failed", e);
+        }
 
         // --- GLOBAL STATE ---
         let currentNote = null;
-        let noteUUID = '';
+        let noteId = '';
 
         // --- UI UTILITIES ---
         const modal = document.getElementById('modal');
@@ -145,7 +166,7 @@
             const buttonRegex = /\[(.*?)\]\{(.*?)\}/g;
             const lines = text.split('\n');
             const htmlLines = lines.map(line => {
-                let processedLine = line;
+                let processedLine = line.replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 const trimmed = line.trim();
 
                 if (trimmed.startsWith('# ')) {
@@ -170,37 +191,52 @@
         // --- CORE LOGIC ---
         async function fetchAndRenderNote() {
             const urlParams = new URLSearchParams(window.location.search);
-            noteUUID = urlParams.get('uuid');
+            noteId = urlParams.get('uuid') || urlParams.get('id');
             
             const titleEl = document.getElementById('note-title');
             const contentEl = document.getElementById('note-content');
 
-            if (!noteUUID) {
+            if (!noteId) {
                 titleEl.textContent = 'Błąd';
                 contentEl.innerHTML = '<p>Nie znaleziono identyfikatora notatki w adresie URL.</p>';
                 return;
             }
 
-            const { data, error } = await supabase
+            // 1. Try fetching from Supabase
+            const { data: supabaseData, error: supabaseError } = await supabase
                 .from('notes')
                 .select('*')
-                .eq('uuid', noteUUID)
+                .eq('uuid', noteId)
                 .single();
 
-            if (error || !data) {
-                console.error('Error fetching note:', error);
-                titleEl.textContent = 'Brak dostępu';
-                contentEl.innerHTML = '<p>Notatka nie została znaleziona lub nie jest publiczna.</p>';
+            if (supabaseData && !supabaseError) {
+                currentNote = {...supabaseData, source: 'supabase'};
+                titleEl.textContent = currentNote.title;
+                titleEl.style.color = currentNote.title_color || 'inherit';
+                document.title = currentNote.title;
+                contentEl.innerHTML = convertTextToHtml(currentNote.content);
                 return;
             }
-            
-            currentNote = data; // Store the fetched note state
 
-            titleEl.textContent = currentNote.title;
-            titleEl.style.color = currentNote.title_color || 'inherit';
-            document.title = currentNote.title; // Update page title
+            // 2. If not in Supabase, try Firebase
+            if(db) {
+                const docRef = doc(db, `artifacts/${appId}/public/data/notes`, noteId);
+                const docSnap = await getDoc(docRef);
 
-            contentEl.innerHTML = convertTextToHtml(currentNote.content);
+                if (docSnap.exists() && docSnap.data().is_public) {
+                    currentNote = { id: docSnap.id, ...docSnap.data(), source: 'firebase' };
+                    titleEl.textContent = currentNote.title;
+                    titleEl.style.color = currentNote.titleColor || 'inherit';
+                    document.title = currentNote.title;
+                    contentEl.innerHTML = convertTextToHtml(currentNote.content);
+                    return;
+                }
+            }
+
+            // 3. If not found in either
+            console.error('Error fetching note from Supabase:', supabaseError);
+            titleEl.textContent = 'Brak dostępu';
+            contentEl.innerHTML = '<p>Notatka nie została znaleziona lub nie jest publiczna.</p>';
         }
 
         async function handleCheckboxChange(e) {
@@ -229,19 +265,25 @@
             });
             
             const newContent = newLines.join('\n');
-
-            // Optimistic update
             const oldContent = currentNote.content;
-            currentNote.content = newContent;
+            currentNote.content = newContent; // Optimistic update
 
-            const { error } = await supabase
-                .from('notes')
-                .update({ content: newContent, updated_at: new Date() })
-                .eq('uuid', noteUUID);
-
-            if (error) {
-                // Revert on failure
-                currentNote.content = oldContent;
+            try {
+                if (currentNote.source === 'supabase') {
+                    const { error } = await supabase
+                        .from('notes')
+                        .update({ content: newContent, updated_at: new Date() })
+                        .eq('uuid', noteId);
+                    if(error) throw error;
+                } else if (currentNote.source === 'firebase') {
+                    const docRef = doc(db, `artifacts/${appId}/public/data/notes`, currentNote.id);
+                    await updateDoc(docRef, {
+                        content: newContent,
+                        updatedAt: new Date()
+                    });
+                }
+            } catch (error) {
+                currentNote.content = oldContent; // Revert on failure
                 e.target.checked = !e.target.checked;
                 showModal('Błąd', 'Nie udało się zapisać zmiany.');
                 console.error('Error updating note:', error);
@@ -276,4 +318,3 @@
     </script>
 </body>
 </html>
-
