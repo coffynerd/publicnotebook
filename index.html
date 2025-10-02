@@ -117,7 +117,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, updateDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- CONFIGURATION ---
         const firebaseConfigFromEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
@@ -250,10 +250,21 @@
                 return;
             }
 
-            const docRef = doc(db, `artifacts/${appId}/public/data/notes`, noteId);
-            const docSnap = await getDoc(docRef);
+            let docSnap;
+            // Try fetching by ID first (new Firebase notes)
+            const docRefById = doc(db, `artifacts/${appId}/public/data/notes`, noteId);
+            docSnap = await getDoc(docRefById);
 
-            if (docSnap.exists() && (docSnap.data().public || docSnap.data().is_public)) {
+            // If not found by ID, try fetching by UUID (old Supabase notes migrated to Firebase)
+            if (!docSnap.exists()) {
+                const q = query(collection(db, `artifacts/${appId}/public/data/notes`), where("uuid", "==", noteId));
+                const querySnapshot = await getDocs(q);
+                if (!querySnapshot.empty) {
+                    docSnap = querySnapshot.docs[0];
+                }
+            }
+            
+            if (docSnap && docSnap.exists() && (docSnap.data().public || docSnap.data().is_public)) {
                 currentNote = { id: docSnap.id, ...docSnap.data(), source: 'firebase' };
                 titleEl.textContent = currentNote.title;
                 titleEl.style.color = currentNote.titleColor || 'inherit';
@@ -262,7 +273,7 @@
                 return;
             }
 
-            // If not found in Firebase or not public
+            // If not found in Firebase at all
             titleEl.textContent = 'Brak dostępu';
             contentEl.innerHTML = '<p>Notatka nie została znaleziona lub nie jest publiczna.</p>';
         }
