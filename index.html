@@ -117,6 +117,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, updateDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- CONFIGURATION ---
@@ -132,10 +133,11 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         // --- FIREBASE INIT ---
-        let db;
+        let db, auth;
         try {
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
+            auth = getAuth(app);
         } catch(e) {
             console.error("Firebase init failed", e);
             document.body.innerHTML = '<h1>Błąd inicjalizacji bazy danych.</h1>';
@@ -255,7 +257,7 @@
             const docRefById = doc(db, `artifacts/${appId}/public/data/notes`, noteId);
             docSnap = await getDoc(docRefById);
 
-            // If not found by ID, try fetching by UUID (old Supabase notes migrated to Firebase)
+            // If not found by ID, try fetching by UUID
             if (!docSnap.exists()) {
                 const q = query(collection(db, `artifacts/${appId}/public/data/notes`), where("uuid", "==", noteId));
                 const querySnapshot = await getDocs(q);
@@ -265,7 +267,7 @@
             }
             
             if (docSnap && docSnap.exists() && (docSnap.data().public || docSnap.data().is_public)) {
-                currentNote = { id: docSnap.id, ...docSnap.data(), source: 'firebase' };
+                currentNote = { id: docSnap.id, ...docSnap.data() };
                 titleEl.textContent = currentNote.title;
                 titleEl.style.color = currentNote.titleColor || 'inherit';
                 document.title = currentNote.title;
@@ -313,7 +315,17 @@
         }
 
         // --- INITIALIZATION ---
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await signInAnonymously(auth);
+                console.log("Signed in anonymously");
+            } catch (error) {
+                console.error("Anonymous sign in failed", error);
+                document.getElementById('note-title').textContent = 'Błąd Uwierzytelniania';
+                document.getElementById('note-content').innerHTML = '<p>Nie można połączyć się z usługą.</p>';
+                return;
+            }
+
             const savedTheme = localStorage.getItem('publicNoteTheme');
             if (savedTheme === 'dark') {
                 document.body.classList.add('dark-mode');
