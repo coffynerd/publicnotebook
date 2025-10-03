@@ -266,7 +266,7 @@
                 }
             }
             
-            if (docSnap && docSnap.exists() && (docSnap.data().public || docSnap.data().is_public)) {
+            if (docSnap && docSnap.exists()) {
                 currentNote = { id: docSnap.id, ...docSnap.data() };
                 titleEl.textContent = currentNote.title;
                 titleEl.style.color = currentNote.titleColor || 'inherit';
@@ -277,7 +277,7 @@
 
             // If not found in Firebase at all
             titleEl.textContent = 'Brak dostępu';
-            contentEl.innerHTML = '<p>Notatka nie została znaleziona lub nie jest publiczna.</p>';
+            contentEl.innerHTML = '<p>Notatka nie została znaleziona.</p>';
         }
 
         async function handleCheckboxChange(e) {
